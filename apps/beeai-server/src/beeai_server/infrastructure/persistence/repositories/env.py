@@ -1,16 +1,5 @@
 # Copyright 2025 © BeeAI a Series of LF Projects, LLC
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-License-Identifier: Apache-2.0
 
 from kink import inject
 from sqlalchemy import Table, Column, String, Text
@@ -47,7 +36,8 @@ class SqlAlchemyEnvVariableRepository(IEnvVariableRepository):
         to_remove = [key for key, value in variables.items() if value is None or key in existing_keys]
         crypted = {key: self.fernet.encrypt(var.encode()).decode() for key, var in variables.items() if var is not None}
         await self.connection.execute(variables_table.delete().where(variables_table.c.key.in_(to_remove)))
-        await self.connection.execute(variables_table.insert().values(list(crypted.items())))
+        if crypted:
+            await self.connection.execute(variables_table.insert().values(list(crypted.items())))
 
     async def get(self, *, key: str, default: str | None = NOT_SET) -> str:
         query = variables_table.select().where(variables_table.c.key == key)

@@ -1,23 +1,11 @@
 /**
  * Copyright 2025 © BeeAI a Series of LF Projects, LLC
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: Apache-2.0
  */
 
 import { useCallback, useRef, useState } from 'react';
 
 import { handleStream } from '#api/utils.ts';
-import type { Agent } from '#modules/agents/api/types.ts';
 
 import { useCancelRun } from '../api/mutations/useCancelRun';
 import { useCreateRunStream } from '../api/mutations/useCreateRunStream';
@@ -28,17 +16,19 @@ import type {
   MessagePartEvent,
   RunCancelledEvent,
   RunCompletedEvent,
+  RunCreatedEvent,
   RunEvent,
   RunFailedEvent,
   RunId,
   SessionId,
 } from '../api/types';
 import { EventType } from '../api/types';
-import type { MessageParams } from '../chat/types';
-import { createMessagePart, createRunStreamRequest } from '../utils';
+import type { RunAgentParams } from '../types';
+import { createRunStreamRequest } from '../utils';
 
 interface Props {
   onBeforeRun?: () => void;
+  onRunCreated?: (event: RunCreatedEvent) => void;
   onRunFailed?: (event: RunFailedEvent) => void;
   onRunCancelled?: (event: RunCancelledEvent) => void;
   onRunCompleted?: (event: RunCompletedEvent) => void;
@@ -51,6 +41,7 @@ interface Props {
 
 export function useRunAgent({
   onBeforeRun,
+  onRunCreated,
   onRunFailed,
   onRunCancelled,
   onRunCompleted,
@@ -77,12 +68,14 @@ export function useRunAgent({
   }, [onDone]);
 
   const runAgent = useCallback(
-    async ({ agent, ...params }: { agent: Agent } & MessageParams) => {
+    async ({ agent, messageParts }: RunAgentParams) => {
       try {
         onBeforeRun?.();
 
+        const content = messageParts.reduce((acc, { content }) => (content ? `${acc}\n${content}` : acc), '');
+
         setIsPending(true);
-        setInput(params.content);
+        setInput(content);
 
         const abortController = new AbortController();
         abortControllerRef.current = abortController;
@@ -90,7 +83,7 @@ export function useRunAgent({
         const stream = await createRunStream({
           body: createRunStreamRequest({
             agent: agent.name,
-            messagePart: createMessagePart(params),
+            messageParts,
             sessionId,
           }),
           signal: abortController.signal,
@@ -101,6 +94,7 @@ export function useRunAgent({
           onEvent: (event) => {
             switch (event.type) {
               case EventType.RunCreated:
+                onRunCreated?.(event);
                 setRunId(event.run.run_id);
                 setSessionId(event.run.session_id);
 
@@ -142,10 +136,11 @@ export function useRunAgent({
       }
     },
     [
-      sessionId,
-      createRunStream,
-      handleDone,
       onBeforeRun,
+      createRunStream,
+      sessionId,
+      onRunCreated,
+      handleDone,
       onRunFailed,
       onRunCancelled,
       onRunCompleted,

@@ -1,16 +1,5 @@
 # Copyright 2025 © BeeAI a Series of LF Projects, LLC
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-License-Identifier: Apache-2.0
 
 import base64
 import hashlib
@@ -49,6 +38,7 @@ async def build(
     context: typing.Annotated[str, typer.Argument(help="Docker context for the agent")] = ".",
     tag: typing.Annotated[str | None, typer.Option(help="Docker tag for the agent")] = None,
     multi_platform: bool | None = False,
+    push: typing.Annotated[bool, typer.Argument(help="Push the image to the target registry.")] = False,
     import_image: typing.Annotated[
         bool, typer.Option("--import/--no-import", is_flag=True, help="Import the image into BeeAI platform")
     ] = True,
@@ -60,12 +50,8 @@ async def build(
         await run_command(["which", "docker"], "Checking docker")
         image_id = "beeai-agent-build-tmp:latest"
         port = await find_free_port()
-        if multi_platform:
-            build_command = ["docker", "buildx", "build", "--platform=linux/amd64,linux/arm64", "--load"]
-        else:
-            build_command = ["docker", "build"]
 
-        await run_command([*build_command, context, "-t", image_id], "Building agent image")
+        await run_command(["docker", "build", context, "-t", image_id], "Building agent image")
 
         response = None
 
@@ -105,13 +91,16 @@ async def build(
 
         context_hash = hashlib.sha256(context.encode()).hexdigest()[:6]
         context_shorter = re.sub(r"https?://", "", context).replace(r".git", "")
-        tag = (
-            tag
-            or f"beeai.local/{re.sub(r'[^a-zA-Z0-9_-]+', '-', context_shorter)[:32].lstrip('-')}-{context_hash}:latest"
-        ).lower()
+        context_shorter = re.sub(r"[^a-zA-Z0-9_-]+", "-", context_shorter)[:32].lstrip("-") or "provider"
+        tag = (tag or f"beeai.local/{context_shorter}-{context_hash}:latest").lower()
         await run_command(
             command=[
-                *build_command,
+                *(
+                    ["docker", "buildx", "build", "--platform=linux/amd64,linux/arm64"]
+                    if multi_platform
+                    else ["docker", "build"]
+                ),
+                "--push" if push else "--load",
                 context,
                 "-t",
                 tag,

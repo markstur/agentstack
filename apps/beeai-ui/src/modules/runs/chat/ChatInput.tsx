@@ -1,17 +1,6 @@
 /**
  * Copyright 2025 © BeeAI a Series of LF Projects, LLC
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: Apache-2.0
  */
 
 import { Send, StopOutlineFilled } from '@carbon/icons-react';
@@ -22,6 +11,7 @@ import { FormProvider, useForm } from 'react-hook-form';
 import type { InputBarFormHandle } from '../components/InputBar';
 import { InputBar } from '../components/InputBar';
 import { useChat } from '../contexts/chat';
+import { useFileUpload } from '../files/contexts';
 // import { ChatSettings } from './ChatSettings';
 import { ChatDefaultTools } from './constants';
 
@@ -34,6 +24,7 @@ export const ChatInput = memo(function ChatInput({ onMessageSubmit }: Props) {
   const formRef = useRef<InputBarFormHandle>(null);
 
   const { isPending, sendMessage, onCancel } = useChat();
+  const { isPending: isFileUploadPending } = useFileUpload();
 
   const form = useForm<ChatFormValues>({
     mode: 'onChange',
@@ -50,7 +41,7 @@ export const ChatInput = memo(function ChatInput({ onMessageSubmit }: Props) {
 
   const inputValue = watch('input');
 
-  const isSubmitDisabled = isPending || !inputValue;
+  const isSubmitDisabled = isPending || isFileUploadPending || !inputValue;
 
   return (
     <FormProvider {...form}>
@@ -80,7 +71,7 @@ export const ChatInput = memo(function ChatInput({ onMessageSubmit }: Props) {
               kind="ghost"
               size="sm"
               hasIconOnly
-              iconDescription="Send"
+              iconDescription={isFileUploadPending ? 'Files are uploading' : 'Send'}
               disabled={isSubmitDisabled}
             />
           ) : (

@@ -1,17 +1,6 @@
 /**
  * Copyright 2025 © BeeAI a Series of LF Projects, LLC
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * SPDX-License-Identifier: Apache-2.0
  */
 
 import humanizeDuration from 'humanize-duration';
@@ -28,6 +17,9 @@ import {
   RunMode,
   type SessionId,
 } from './api/types';
+import type { UploadFileResponse } from './files/api/types';
+import type { FileEntity } from './files/types';
+import { getFileContentUrl } from './files/utils';
 import { Role, type RunLog } from './types';
 
 humanizeDuration.languages.shortEn = {
@@ -50,16 +42,21 @@ export function runDuration(ms: number) {
 
 export function createRunStreamRequest({
   agent,
-  messagePart,
+  messageParts,
   sessionId,
 }: {
   agent: AgentName;
-  messagePart: MessagePart;
+  messageParts: MessagePart[];
   sessionId?: SessionId;
 }): CreateRunStreamRequest {
   return {
     agent_name: agent,
-    input: [{ parts: [messagePart] }],
+    input: [
+      {
+        parts: messageParts,
+        role: `agent/${agent}`,
+      },
+    ],
     mode: RunMode.Stream,
     session_id: sessionId,
   };
@@ -69,16 +66,26 @@ export function createMessagePart({
   content,
   content_encoding = 'plain',
   content_type = 'text/plain',
+  content_url,
 }: Partial<Exclude<MessagePart, 'role'>>): MessagePart {
   return {
     content,
     content_encoding,
     content_type,
+    content_url,
     role: Role.User,
   };
 }
 
-export function isArtifact(part: MessagePart): part is Artifact {
+export function createFileMessageParts(files: UploadFileResponse[]) {
+  const messageParts = files.map(({ id }) =>
+    createMessagePart({ content_url: getFileContentUrl({ id, addBase: true }) }),
+  );
+
+  return messageParts;
+}
+
+export function isArtifactPart(part: MessagePart): part is Artifact {
   return typeof part.name === 'string';
 }
 
@@ -90,6 +97,16 @@ export function extractOutput(messages: Message[]) {
     .join('');
 
   return output;
+}
+
+export function extractValidUploadFiles(files: FileEntity[]) {
+  const uploadFiles = files.map(({ uploadFile }) => uploadFile).filter(isNotNull);
+
+  return uploadFiles;
+}
+
+export function mapToMessageFiles(uploadFiles: UploadFileResponse[]) {
+  return uploadFiles.map(({ id, filename }) => ({ key: id, filename, href: getFileContentUrl({ id }) }));
 }
 
 export function formatLog(log: RunLog) {
@@ -111,7 +128,3 @@ const parseJsonLikeString = (string: string): unknown | string => {
     return string;
   }
 };
-
-export function isGraniteModel(name: string) {
-  return name.includes('granite');
-}

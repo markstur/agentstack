@@ -1,22 +1,12 @@
 # Copyright 2025 © BeeAI a Series of LF Projects, LLC
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-License-Identifier: Apache-2.0
 
 import logging
 import pathlib
 from contextlib import asynccontextmanager
 from typing import Iterable
 
+import procrastinate
 from acp_sdk import ACPError
 from acp_sdk.server.errors import (
     acp_error_handler,
@@ -26,12 +16,13 @@ from acp_sdk.server.errors import (
 )
 from starlette.requests import Request
 
+from beeai_server.run_workers import run_workers
 from beeai_server.utils.fastapi import NoCacheStaticFiles
 from fastapi import FastAPI, APIRouter
 from fastapi import HTTPException
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import ORJSONResponse
-from kink import inject, di
+from kink import inject, di, Container
 from starlette.responses import FileResponse
 from starlette.status import HTTP_500_INTERNAL_SERVER_ERROR, HTTP_400_BAD_REQUEST
 from starlette.exceptions import HTTPException as StarletteHttpException
@@ -41,10 +32,17 @@ from fastapi.exceptions import RequestValidationError
 from beeai_server.telemetry import INSTRUMENTATION_NAME, shutdown_telemetry
 from beeai_server.bootstrap import bootstrap_dependencies_sync
 from beeai_server.configuration import Configuration
-from beeai_server.exceptions import ManifestLoadError, ProviderNotInstalledError, DuplicateEntityError
+from beeai_server.exceptions import (
+    ManifestLoadError,
+    ProviderNotInstalledError,
+    DuplicateEntityError,
+    UsageLimitExceeded,
+    EntityNotFoundError,
+)
 from beeai_server.api.routes.provider import router as provider_router
 from beeai_server.api.routes.acp import router as acp_router
 from beeai_server.api.routes.env import router as env_router
+from beeai_server.api.routes.files import router as files_router
 from beeai_server.api.routes.llm import router as llm_router
 from beeai_server.api.routes.ui import router as ui_router
 
@@ -61,6 +59,8 @@ def extract_messages(exc):
 def register_global_exception_handlers(app: FastAPI):
     @app.exception_handler(DuplicateEntityError)
     @app.exception_handler(ManifestLoadError)
+    @app.exception_handler(UsageLimitExceeded)
+    @app.exception_handler(EntityNotFoundError)
     async def entity_not_found_exception_handler(request, exc: ManifestLoadError | DuplicateEntityError):
         return await http_exception_handler(request, HTTPException(status_code=exc.status_code, detail=str(exc)))
 
@@ -118,6 +118,7 @@ def mount_routes(app: FastAPI):
     server_router.include_router(acp_router, prefix="/acp")
     server_router.include_router(provider_router, prefix="/providers", tags=["providers"])
     server_router.include_router(env_router, prefix="/variables", tags=["variables"])
+    server_router.include_router(files_router, prefix="/files", tags=["files"])
     server_router.include_router(llm_router, prefix="/llm", tags=["llm"])
     server_router.include_router(ui_router, prefix="/ui", tags=["ui"])
 
@@ -152,26 +153,26 @@ def register_telemetry():
     # meter.create_observable_gauge("providers_by_status", callbacks=[scrape_providers_by_status])
 
 
-@asynccontextmanager
-@inject
-async def lifespan(_app: FastAPI):
-    from beeai_server.utils.periodic import run_all_crons
-
-    register_telemetry()
-
-    async with run_all_crons():
-        try:
-            yield
-        finally:
-            shutdown_telemetry()
-
-
-def app() -> FastAPI:
+def app(*, dependency_overrides: Container | None = None) -> FastAPI:
     """Entrypoint for API application, called by Uvicorn"""
 
     logger.info("Bootstrapping dependencies...")
-    bootstrap_dependencies_sync()
+    bootstrap_dependencies_sync(dependency_overrides=dependency_overrides)
     configuration = di[Configuration]
+
+    @asynccontextmanager
+    @inject
+    async def lifespan(_app: FastAPI, procrastinate_app: procrastinate.App):
+        try:
+            register_telemetry()
+            async with procrastinate_app.open_async(), run_workers(app=procrastinate_app):
+                try:
+                    yield
+                finally:
+                    shutdown_telemetry()
+        except Exception as e:
+            logger.error("Error during startup: %s", repr(extract_messages(e)))
+            raise
 
     app = FastAPI(
         lifespan=lifespan,

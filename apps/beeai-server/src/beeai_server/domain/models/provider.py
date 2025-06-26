@@ -1,16 +1,5 @@
 # Copyright 2025 © BeeAI a Series of LF Projects, LLC
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# SPDX-License-Identifier: Apache-2.0
 
 import base64
 import hashlib
@@ -25,7 +14,7 @@ from uuid import UUID
 
 import yaml
 
-from acp_sdk import Agent as AcpAgent
+from acp_sdk import AgentManifest as AcpAgent
 
 from beeai_server.configuration import Configuration
 from beeai_server.domain.constants import DOCKER_MANIFEST_LABEL_NAME
@@ -56,13 +45,17 @@ class DockerImageProviderLocation(RootModel):
         location_digest = hashlib.sha256(str(self.root).encode()).digest()
         return UUID(bytes=location_digest[:16])
 
+    @property
+    def is_on_host(self) -> bool:
+        return False
+
     @inject
     async def load_agents(self) -> list[AcpAgent]:
         from acp_sdk import AgentsListResponse
 
         _, labels = await get_registry_image_config_and_labels(self.root)
         if DOCKER_MANIFEST_LABEL_NAME not in labels:
-            raise ValueError(f"Docker image labels must contain 'beeai.dev.agent.yaml': {self.location}")
+            raise ValueError(f"Docker image labels must contain 'beeai.dev.agent.yaml': {str(self.root)}")
         return AgentsListResponse.model_validate(
             yaml.safe_load(base64.b64decode(labels[DOCKER_MANIFEST_LABEL_NAME]))
         ).agents
@@ -75,11 +68,19 @@ class NetworkProviderLocation(RootModel):
     def _replace_localhost_url(cls, data: Any, handler: ModelWrapValidatorHandler):
         configuration = di[Configuration]
         url: NetworkProviderLocation = handler(data)
-        # localhost does not make sense in k8s environment, replace it with host.docker.internal for backward compatibility
-        if configuration.self_registration_use_local_network:
-            return url
-        url.root = HttpUrl(re.sub(r"localhost|127\.0\.0\.1", "host.docker.internal", str(url.root)))
+        if configuration.provider.self_registration_use_local_network:
+            url.root = HttpUrl(re.sub(r"host.docker.internal", "localhost", str(url.root)))
+        else:
+            # localhost does not make sense in k8s environment, replace it with host.docker.internal for backward compatibility
+            url.root = HttpUrl(re.sub(r"localhost|127\.0\.0\.1", "host.docker.internal", str(url.root)))
         return url
+
+    @property
+    def is_on_host(self) -> bool:
+        """
+        Return True for self-registered providers which need to be treated a bit differently
+        """
+        return any(url in str(self.root) for url in {"host.docker.internal", "localhost", "127.0.0.1"})
 
     @property
     def provider_id(self) -> UUID:
